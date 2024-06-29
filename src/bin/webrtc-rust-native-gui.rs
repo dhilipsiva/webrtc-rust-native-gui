@@ -85,11 +85,13 @@ impl WebRTCApp {
             let ice_candidates = Arc::clone(&self.ice_candidates);
             pc.on_ice_candidate(Box::new(move |candidate| {
                 dbg!(&candidate);
-                if let Some(candidate) = candidate {
-                    let mut ice_candidates = ice_candidates.blocking_lock();
-                    ice_candidates.push(candidate.to_json().unwrap());
-                }
-                Box::pin(async {})
+                let ice_candidates = Arc::clone(&ice_candidates);
+                Box::pin(async move {
+                    if let Some(candidate) = candidate {
+                        let mut ice_candidates = ice_candidates.lock().await;
+                        ice_candidates.push(candidate.to_json().unwrap());
+                    }
+                })
             }));
 
             match pc.create_offer(None).await {
