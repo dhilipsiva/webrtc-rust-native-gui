@@ -56,14 +56,6 @@ impl WebRTCApp {
             match pc.create_offer(None).await {
                 Ok(offer) => {
                     pc.set_local_description(offer.clone()).await.unwrap();
-
-                    // Wait for ICE Gathering to complete
-                    let mut gather_complete = pc.gathering_complete_promise().await;
-                    dbg!(gather_complete.recv().await);
-                    // while pc.ice_gathering_state() != RTCIceGatheringState::Complete {
-                    //     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    // }
-
                     if let Some(local_desc) = pc.local_description().await {
                         let local_sdp_clone = local_desc.sdp.clone();
                         info!("Offer created with SDP: {}", local_sdp_clone);
