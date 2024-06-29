@@ -3,8 +3,6 @@ use log::info;
 use std::sync::{Arc, Mutex};
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
@@ -24,19 +22,17 @@ async fn main() {
 }
 
 struct WebRTCApp {
-    peer_connection: Arc<Mutex<Option<Arc<RTCPeerConnection>>>>,
+    peer_connection: Arc<tokio::sync::Mutex<Option<Arc<RTCPeerConnection>>>>,
     local_sdp: Arc<Mutex<String>>,
     remote_sdp: Arc<Mutex<String>>,
-    ice_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
 }
 
 impl WebRTCApp {
     fn new() -> Self {
         Self {
-            peer_connection: Arc::new(Mutex::new(None)),
+            peer_connection: Arc::new(tokio::sync::Mutex::new(None)),
             local_sdp: Arc::new(Mutex::new(String::new())),
             remote_sdp: Arc::new(Mutex::new(String::new())),
-            ice_candidates: Arc::new(Mutex::new(vec![])),
         }
     }
 }
@@ -47,53 +43,33 @@ impl Clone for WebRTCApp {
             peer_connection: Arc::clone(&self.peer_connection),
             local_sdp: Arc::clone(&self.local_sdp),
             remote_sdp: Arc::clone(&self.remote_sdp),
-            ice_candidates: Arc::clone(&self.ice_candidates),
         }
     }
 }
 
 impl WebRTCApp {
-    async fn gather_ice_candidates(&self) {
-        let pc = self.peer_connection.lock().unwrap().clone();
-        if let Some(pc) = pc {
-            let mut gather_complete = false;
-            while !gather_complete {
-                let state = pc.ice_gathering_state();
-                match state {
-                    RTCIceGatheringState::Complete => {
-                        gather_complete = true;
-                    }
-                    _ => tokio::time::sleep(tokio::time::Duration::from_millis(100)).await,
-                }
-            }
-        }
-    }
-
     async fn create_offer(&self) {
-        let pc = self.peer_connection.lock().unwrap().clone();
+        let pc = self.peer_connection.lock().await.clone();
         if let Some(pc) = pc {
             info!("Creating offer...");
-            let ice_candidates = Arc::clone(&self.ice_candidates);
-            pc.on_ice_candidate(Box::new(move |candidate| {
-                if let Some(candidate) = candidate {
-                    let mut ice_candidates = ice_candidates.lock().unwrap();
-                    ice_candidates.push(candidate.to_json().unwrap());
-                }
-                Box::pin(async {})
-            }));
-
             match pc.create_offer(None).await {
-                Ok(offer) => match pc.set_local_description(offer.clone()).await {
-                    Ok(_) => {
-                        self.gather_ice_candidates().await;
+                Ok(offer) => {
+                    pc.set_local_description(offer.clone()).await.unwrap();
+
+                    // Wait for ICE Gathering to complete
+                    let mut gather_complete = pc.gathering_complete_promise().await;
+                    dbg!(gather_complete.recv().await);
+                    // while pc.ice_gathering_state() != RTCIceGatheringState::Complete {
+                    //     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    // }
+
+                    if let Some(local_desc) = pc.local_description().await {
+                        let local_sdp_clone = local_desc.sdp.clone();
+                        info!("Offer created with SDP: {}", local_sdp_clone);
                         let mut local_sdp = self.local_sdp.lock().unwrap();
-                        *local_sdp = offer.sdp;
-                        info!("Offer created: {}", *local_sdp);
+                        *local_sdp = local_sdp_clone;
                     }
-                    Err(err) => {
-                        info!("Failed to set local description: {:?}", err);
-                    }
-                },
+                }
                 Err(err) => {
                     info!("Failed to create offer: {:?}", err);
                 }
@@ -102,22 +78,17 @@ impl WebRTCApp {
             info!("Peer connection is not initialized");
         }
     }
-
     async fn handle_answer(&self) {
-        let pc = self.peer_connection.lock().unwrap().clone();
+        let pc = self.peer_connection.lock().await.clone();
         if let Some(pc) = pc {
-            let remote_sdp = self.remote_sdp.lock().unwrap().clone();
-            let answer = RTCSessionDescription::answer(remote_sdp).unwrap();
+            let remote_sdp_clone = {
+                let remote_sdp = self.remote_sdp.lock().unwrap();
+                remote_sdp.clone()
+            };
+            let answer = RTCSessionDescription::answer(remote_sdp_clone.clone()).unwrap();
             match pc.set_remote_description(answer).await {
-                Ok(_) => {
-                    info!("Remote description set");
-                    self.gather_ice_candidates().await;
-
-                    // Add stored ICE candidates
-                    let ice_candidates = self.ice_candidates.lock().unwrap().clone();
-                    for candidate in ice_candidates {
-                        pc.add_ice_candidate(candidate).await.unwrap();
-                    }
+                Ok(ok) => {
+                    info!("Remote description set: {:?}", ok);
                 }
                 Err(err) => {
                     info!("Failed to set remote description: {:?}", err);
@@ -150,7 +121,7 @@ impl WebRTCApp {
         };
 
         let peer_connection = api.new_peer_connection(config).await.unwrap();
-        let mut pc = self.peer_connection.lock().unwrap();
+        let mut pc = self.peer_connection.lock().await;
         *pc = Some(Arc::new(peer_connection));
     }
 }
