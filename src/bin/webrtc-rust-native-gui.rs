@@ -110,7 +110,7 @@ impl WebRTCApp {
                         let mut local_sdp_clone = local_desc.sdp.clone();
                         info!("Offer created with SDP: {}", local_sdp_clone);
                         local_sdp_clone
-                            .push_str("\na=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu");
+                            .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
                         let mut local_sdp = self.local_sdp.lock().unwrap();
                         *local_sdp = local_sdp_clone
                     }
