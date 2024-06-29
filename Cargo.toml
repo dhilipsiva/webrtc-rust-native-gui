@@ -10,3 +10,11 @@ env_logger = "0.11.3"
 log = "0.4.22"
 tokio = { version = "1.38.0", features = ["full"] }
 webrtc = "0.11.0"
+
+[[bin]]
+name = "webrtc-rust-native-gui"
+path = "src/bin/webrtc-rust-native-gui.rs"
+
+[[bin]]
+name = "stun-server"
+path = "src/bin/stun-server.rs"

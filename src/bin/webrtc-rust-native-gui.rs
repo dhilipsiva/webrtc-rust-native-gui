@@ -130,10 +130,20 @@ impl WebRTCApp {
         media_engine.register_default_codecs().unwrap();
         let api = APIBuilder::new().with_media_engine(media_engine).build();
         let config = RTCConfiguration {
-            ice_servers: vec![RTCIceServer {
-                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-                ..Default::default()
-            }],
+            ice_servers: vec![
+                RTCIceServer {
+                    urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                    ..Default::default()
+                },
+                RTCIceServer {
+                    urls: vec!["stun:stun1.l.google.com:19302".to_owned()],
+                    ..Default::default()
+                },
+                RTCIceServer {
+                    urls: vec!["stun:stun2.l.google.com:19302".to_owned()],
+                    ..Default::default()
+                },
+            ],
             ..Default::default()
         };
 
