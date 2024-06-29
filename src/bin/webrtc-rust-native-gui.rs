@@ -1,13 +1,14 @@
 use eframe::egui;
 use log::info;
 use std::sync::{Arc, Mutex};
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::{
+    api::{media_engine::MediaEngine, APIBuilder},
+    ice_transport::ice_server::RTCIceServer,
+    peer_connection::{
+        configuration::RTCConfiguration, policy::ice_transport_policy::RTCIceTransportPolicy,
+        sdp::session_description::RTCSessionDescription, RTCPeerConnection,
+    },
+};
 
 #[tokio::main]
 async fn main() {
