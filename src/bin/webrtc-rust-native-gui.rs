@@ -3,10 +3,11 @@ use log::info;
 use std::sync::{Arc, Mutex};
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
-use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
@@ -144,6 +145,7 @@ impl WebRTCApp {
                     ..Default::default()
                 },
             ],
+            ice_transport_policy: RTCIceTransportPolicy::Relay, // Use relay to enforce IPv4 use
             ..Default::default()
         };
 
