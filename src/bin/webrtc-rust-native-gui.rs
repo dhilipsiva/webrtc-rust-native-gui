@@ -107,10 +107,12 @@ impl WebRTCApp {
                     }
 
                     if let Some(local_desc) = pc.local_description().await {
-                        let local_sdp_clone = local_desc.sdp.clone();
+                        let mut local_sdp_clone = local_desc.sdp.clone();
                         info!("Offer created with SDP: {}", local_sdp_clone);
+                        local_sdp_clone
+                            .push_str("\na=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu");
                         let mut local_sdp = self.local_sdp.lock().unwrap();
-                        *local_sdp = local_sdp_clone;
+                        *local_sdp = local_sdp_clone
                     }
                 }
                 Err(err) => {
