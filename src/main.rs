@@ -3,6 +3,8 @@ use log::info;
 use std::sync::{Arc, Mutex};
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
+use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
+use webrtc::ice_transport::ice_gathering_state::RTCIceGatheringState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -34,22 +36,48 @@ impl WebRTCApp {
             remote_sdp: Arc::new(Mutex::new(String::new())),
         }
     }
+}
 
-    async fn create_peer_connection(&self) {
-        let mut media_engine = MediaEngine::default();
-        media_engine.register_default_codecs().unwrap();
-        let api = APIBuilder::new().with_media_engine(media_engine).build();
-        let config = RTCConfiguration {
-            ice_servers: vec![RTCIceServer {
-                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
+impl Clone for WebRTCApp {
+    fn clone(&self) -> Self {
+        Self {
+            peer_connection: Arc::clone(&self.peer_connection),
+            local_sdp: Arc::clone(&self.local_sdp),
+            remote_sdp: Arc::clone(&self.remote_sdp),
+        }
+    }
+}
 
-        let peer_connection = api.new_peer_connection(config).await.unwrap();
-        let mut pc = self.peer_connection.lock().unwrap();
-        *pc = Some(Arc::new(peer_connection));
+impl WebRTCApp {
+    async fn gather_ice_candidates(&self) {
+        let pc = self.peer_connection.lock().unwrap().clone();
+        if let Some(pc) = pc {
+            let mut gather_complete = false;
+            while !gather_complete {
+                let state = pc.ice_gathering_state();
+                match state {
+                    RTCIceGatheringState::Complete => {
+                        gather_complete = true;
+                    }
+                    _ => tokio::time::sleep(tokio::time::Duration::from_millis(100)).await,
+                }
+            }
+        }
+    }
+
+    async fn add_ice_candidate(&self, candidate: RTCIceCandidate) {
+        let pc = self.peer_connection.lock().unwrap().clone();
+        if let Some(pc) = pc {
+            let candidate_init = RTCIceCandidateInit {
+                candidate: candidate.to_string(), // Assuming `to_string` will give the candidate string
+                // sdp_mid: candidate.sdp_mid(),     // Use method to get the sdp_mid
+                // sdp_mline_index: candidate.sdp_mline_index(), // Use method to get the sdp_mline_index
+                sdp_mid: Some("0".to_string()),
+                sdp_mline_index: Some(0),
+                username_fragment: None,
+            };
+            pc.add_ice_candidate(candidate_init).await.unwrap();
+        }
     }
 
     async fn create_offer(&self) {
@@ -59,6 +87,7 @@ impl WebRTCApp {
             match pc.create_offer(None).await {
                 Ok(offer) => match pc.set_local_description(offer.clone()).await {
                     Ok(_) => {
+                        self.gather_ice_candidates().await;
                         let mut local_sdp = self.local_sdp.lock().unwrap();
                         *local_sdp = offer.sdp;
                         info!("Offer created: {}", *local_sdp);
@@ -84,6 +113,7 @@ impl WebRTCApp {
             match pc.set_remote_description(answer).await {
                 Ok(_) => {
                     info!("Remote description set");
+                    self.gather_ice_candidates().await;
                 }
                 Err(err) => {
                     info!("Failed to set remote description: {:?}", err);
@@ -91,13 +121,29 @@ impl WebRTCApp {
             }
         }
     }
+
+    async fn create_peer_connection(&self) {
+        let mut media_engine = MediaEngine::default();
+        media_engine.register_default_codecs().unwrap();
+        let api = APIBuilder::new().with_media_engine(media_engine).build();
+        let config = RTCConfiguration {
+            ice_servers: vec![RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let peer_connection = api.new_peer_connection(config).await.unwrap();
+        let mut pc = self.peer_connection.lock().unwrap();
+        *pc = Some(Arc::new(peer_connection));
+    }
 }
 
 impl eframe::App for WebRTCApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let local_sdp = Arc::clone(&self.local_sdp);
         let remote_sdp = Arc::clone(&self.remote_sdp);
-        let peer_connection = Arc::clone(&self.peer_connection);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("WebRTC Client");
@@ -140,15 +186,5 @@ impl eframe::App for WebRTCApp {
                 }
             });
         });
-    }
-}
-
-impl Clone for WebRTCApp {
-    fn clone(&self) -> Self {
-        Self {
-            peer_connection: Arc::clone(&self.peer_connection),
-            local_sdp: Arc::clone(&self.local_sdp),
-            remote_sdp: Arc::clone(&self.remote_sdp),
-        }
     }
 }
