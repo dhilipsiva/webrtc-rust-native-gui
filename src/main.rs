@@ -26,6 +26,7 @@ struct WebRTCApp {
     peer_connection: Arc<Mutex<Option<Arc<RTCPeerConnection>>>>,
     local_sdp: Arc<Mutex<String>>,
     remote_sdp: Arc<Mutex<String>>,
+    ice_candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
 }
 
 impl WebRTCApp {
@@ -34,6 +35,7 @@ impl WebRTCApp {
             peer_connection: Arc::new(Mutex::new(None)),
             local_sdp: Arc::new(Mutex::new(String::new())),
             remote_sdp: Arc::new(Mutex::new(String::new())),
+            ice_candidates: Arc::new(Mutex::new(vec![])),
         }
     }
 }
@@ -44,6 +46,7 @@ impl Clone for WebRTCApp {
             peer_connection: Arc::clone(&self.peer_connection),
             local_sdp: Arc::clone(&self.local_sdp),
             remote_sdp: Arc::clone(&self.remote_sdp),
+            ice_candidates: Arc::clone(&self.ice_candidates),
         }
     }
 }
@@ -65,25 +68,19 @@ impl WebRTCApp {
         }
     }
 
-    async fn add_ice_candidate(&self, candidate: RTCIceCandidate) {
-        let pc = self.peer_connection.lock().unwrap().clone();
-        if let Some(pc) = pc {
-            let candidate_init = RTCIceCandidateInit {
-                candidate: candidate.to_string(), // Assuming `to_string` will give the candidate string
-                // sdp_mid: candidate.sdp_mid(),     // Use method to get the sdp_mid
-                // sdp_mline_index: candidate.sdp_mline_index(), // Use method to get the sdp_mline_index
-                sdp_mid: Some("0".to_string()),
-                sdp_mline_index: Some(0),
-                username_fragment: None,
-            };
-            pc.add_ice_candidate(candidate_init).await.unwrap();
-        }
-    }
-
     async fn create_offer(&self) {
         let pc = self.peer_connection.lock().unwrap().clone();
         if let Some(pc) = pc {
             info!("Creating offer...");
+            let ice_candidates = Arc::clone(&self.ice_candidates);
+            pc.on_ice_candidate(Box::new(move |candidate| {
+                if let Some(candidate) = candidate {
+                    let mut ice_candidates = ice_candidates.lock().unwrap();
+                    ice_candidates.push(candidate.to_json().unwrap());
+                }
+                Box::pin(async {})
+            }));
+
             match pc.create_offer(None).await {
                 Ok(offer) => match pc.set_local_description(offer.clone()).await {
                     Ok(_) => {
@@ -114,6 +111,12 @@ impl WebRTCApp {
                 Ok(_) => {
                     info!("Remote description set");
                     self.gather_ice_candidates().await;
+
+                    // Add stored ICE candidates
+                    let ice_candidates = self.ice_candidates.lock().unwrap().clone();
+                    for candidate in ice_candidates {
+                        pc.add_ice_candidate(candidate).await.unwrap();
+                    }
                 }
                 Err(err) => {
                     info!("Failed to set remote description: {:?}", err);
