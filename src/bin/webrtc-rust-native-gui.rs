@@ -4,12 +4,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder},
-    ice_transport::ice_candidate::RTCIceCandidateInit,
-    ice_transport::ice_gathering_state::RTCIceGatheringState,
-    ice_transport::ice_server::RTCIceServer,
+    ice_transport::{
+        ice_candidate::RTCIceCandidateInit, ice_connection_state::RTCIceConnectionState,
+        ice_gathering_state::RTCIceGatheringState, ice_server::RTCIceServer,
+    },
     peer_connection::{
-        configuration::RTCConfiguration, sdp::session_description::RTCSessionDescription,
-        RTCPeerConnection,
+        configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
+        sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
 };
 
@@ -85,12 +86,12 @@ impl WebRTCApp {
                 Ok(answer) => {
                     pc.set_local_description(answer.clone()).await.unwrap();
                     if let Some(local_desc) = pc.local_description().await {
-                        let mut local_sdp_clone = local_desc.sdp.clone();
-                        info!("Answer created with SDP: {}", local_sdp_clone);
-                        local_sdp_clone
-                            .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
+                        info!("Answer created with SDP: {:?}", local_desc);
+                        let local_sdp_clone = local_desc.sdp.clone();
+                        // local_sdp_clone
+                        //     .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
                         let mut local_sdp = self.local_sdp.lock().unwrap();
-                        *local_sdp = local_sdp_clone.clone();
+                        local_sdp.clone_from(&local_sdp_clone);
                         return local_desc.clone();
                     }
                 }
@@ -128,22 +129,13 @@ impl WebRTCApp {
             match pc.create_offer(None).await {
                 Ok(offer) => {
                     pc.set_local_description(offer.clone()).await.unwrap();
-                    dbg!("before");
                     self.gather_ice_candidates().await;
 
-                    let mut promise = pc.gathering_complete_promise().await;
-                    let _ = promise.recv();
-                    dbg!("after");
-                    // // Ensure local description has ICE candidates and credentials
-                    // while pc.ice_gathering_state() != RTCIceGatheringState::Complete {
-                    //     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    // }
-
                     if let Some(local_desc) = pc.local_description().await {
-                        let mut local_sdp_clone = local_desc.sdp.clone();
-                        info!("Offer created with SDP: {}", local_sdp_clone);
-                        local_sdp_clone
-                            .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
+                        info!("Offer created with SDP: {:?}", &local_desc);
+                        let local_sdp_clone = local_desc.sdp.clone();
+                        // local_sdp_clone
+                        //     .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
                         let mut local_sdp = self.local_sdp.lock().unwrap();
                         *local_sdp = local_sdp_clone
                     }
@@ -154,6 +146,28 @@ impl WebRTCApp {
             }
         } else {
             info!("Peer connection is not initialized");
+        }
+    }
+
+    async fn handle_offer(&self) {
+        let pc = self.peer_connection.lock().await.clone();
+        if let Some(pc) = pc {
+            let remote_sdp_clone = {
+                let remote_sdp = self.remote_sdp.lock().unwrap();
+                remote_sdp.clone()
+            };
+            let offer = RTCSessionDescription::offer(remote_sdp_clone.clone()).unwrap();
+            match pc.set_remote_description(offer).await {
+                Ok(ok) => {
+                    info!("Remote description set: {:?}", ok);
+
+                    let answer = self.create_answer().await;
+                    self.set_local_sdp(answer).await;
+                }
+                Err(err) => {
+                    info!("Failed to set remote description: {:?}", err);
+                }
+            }
         }
     }
 
@@ -202,11 +216,29 @@ impl WebRTCApp {
                     ..Default::default()
                 },
             ],
-            // ice_transport_policy: RTCIceTransportPolicy::Relay, // Use relay to enforce IPv4 use
             ..Default::default()
         };
 
         let peer_connection = api.new_peer_connection(config).await.unwrap();
+
+        peer_connection.on_ice_connection_state_change(Box::new(|state| {
+            Box::pin(async move {
+                info!("ICE Connection State: {:?}", state);
+                if state == RTCIceConnectionState::Connected {
+                    info!("ICE Connection Established");
+                }
+            })
+        }));
+
+        peer_connection.on_peer_connection_state_change(Box::new(|state| {
+            Box::pin(async move {
+                info!("Peer Connection State: {:?}", state);
+                if state == RTCPeerConnectionState::Connected {
+                    info!("Peer Connection Established");
+                }
+            })
+        }));
+
         let mut pc = self.peer_connection.lock().await;
         *pc = Some(Arc::new(peer_connection));
     }
@@ -248,7 +280,16 @@ impl eframe::App for WebRTCApp {
                 ui.label("Remote SDP:");
                 let mut remote_sdp = remote_sdp.lock().unwrap();
                 ui.text_edit_multiline(&mut *remote_sdp);
-                if ui.button("Set Remote SDP").clicked() {
+                if ui.button("Handle Offer").clicked() {
+                    let app = self.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        app.handle_offer().await;
+                        ctx.request_repaint();
+                    });
+                }
+
+                if ui.button("Handle Answer").clicked() {
                     let app = self.clone();
                     let ctx = ctx.clone();
                     tokio::spawn(async move {
