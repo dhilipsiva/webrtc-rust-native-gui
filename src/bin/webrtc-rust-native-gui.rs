@@ -77,6 +77,37 @@ impl WebRTCApp {
             }
         }
     }
+    async fn create_answer(&self) -> RTCSessionDescription {
+        let pc = self.peer_connection.lock().await.clone();
+        if let Some(pc) = pc {
+            info!("Creating answer...");
+            match pc.create_answer(None).await {
+                Ok(answer) => {
+                    pc.set_local_description(answer.clone()).await.unwrap();
+                    if let Some(local_desc) = pc.local_description().await {
+                        let mut local_sdp_clone = local_desc.sdp.clone();
+                        info!("Answer created with SDP: {}", local_sdp_clone);
+                        local_sdp_clone
+                            .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
+                        let mut local_sdp = self.local_sdp.lock().unwrap();
+                        *local_sdp = local_sdp_clone.clone();
+                        return local_desc.clone();
+                    }
+                }
+                Err(err) => {
+                    info!("Failed to create answer: {:?}", err);
+                }
+            }
+        }
+        panic!("Failed to create answer");
+    }
+
+    async fn set_local_sdp(&self, sdp: RTCSessionDescription) {
+        let pc = self.peer_connection.lock().await.clone();
+        if let Some(pc) = pc {
+            pc.set_local_description(sdp).await.unwrap();
+        }
+    }
 
     async fn create_offer(&self) {
         let pc = self.peer_connection.lock().await.clone();
@@ -99,12 +130,14 @@ impl WebRTCApp {
                     pc.set_local_description(offer.clone()).await.unwrap();
                     dbg!("before");
                     self.gather_ice_candidates().await;
-                    dbg!("after");
 
-                    // Ensure local description has ICE candidates and credentials
-                    while pc.ice_gathering_state() != RTCIceGatheringState::Complete {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    }
+                    let mut promise = pc.gathering_complete_promise().await;
+                    let _ = promise.recv();
+                    dbg!("after");
+                    // // Ensure local description has ICE candidates and credentials
+                    // while pc.ice_gathering_state() != RTCIceGatheringState::Complete {
+                    //     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    // }
 
                     if let Some(local_desc) = pc.local_description().await {
                         let mut local_sdp_clone = local_desc.sdp.clone();
@@ -224,6 +257,16 @@ impl eframe::App for WebRTCApp {
                     });
                 }
             });
+
+            if ui.button("Create Answer").clicked() {
+                let app = self.clone();
+                let ctx = ctx.clone();
+                tokio::spawn(async move {
+                    let answer = app.create_answer().await;
+                    app.set_local_sdp(answer).await;
+                    ctx.request_repaint();
+                });
+            }
         });
     }
 }
