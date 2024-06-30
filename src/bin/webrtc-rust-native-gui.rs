@@ -192,27 +192,36 @@ impl WebRTCApp {
             }
         }
     }
-
-    async fn create_peer_connection(&self) {
+    async fn create_peer_connection(&self, ice_lite: bool) {
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs().unwrap();
         let api = APIBuilder::new().with_media_engine(media_engine).build();
-        let config = RTCConfiguration {
-            ice_servers: vec![
-                RTCIceServer {
-                    urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-                    ..Default::default()
-                },
-                RTCIceServer {
-                    urls: vec!["stun:stun1.l.google.com:19302".to_owned()],
-                    ..Default::default()
-                },
-                RTCIceServer {
-                    urls: vec!["stun:stun2.l.google.com:19302".to_owned()],
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
+
+        let config = if ice_lite {
+            // ICE Lite mode configuration
+            RTCConfiguration {
+                ice_servers: vec![],
+                ..Default::default()
+            }
+        } else {
+            // Standard ICE configuration
+            RTCConfiguration {
+                ice_servers: vec![
+                    RTCIceServer {
+                        urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                        ..Default::default()
+                    },
+                    RTCIceServer {
+                        urls: vec!["stun:stun1.l.google.com:19302".to_owned()],
+                        ..Default::default()
+                    },
+                    RTCIceServer {
+                        urls: vec!["stun:stun2.l.google.com:19302".to_owned()],
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }
         };
 
         let peer_connection = api.new_peer_connection(config).await.unwrap();
@@ -248,11 +257,20 @@ impl eframe::App for WebRTCApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("WebRTC Client");
 
-            if ui.button("Initialize").clicked() {
+            if ui.button("Initialize (Standard)").clicked() {
                 let app = self.clone();
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
-                    app.create_peer_connection().await;
+                    app.create_peer_connection(false).await;
+                    ctx.request_repaint();
+                });
+            }
+
+            if ui.button("Initialize (ICE Lite)").clicked() {
+                let app = self.clone();
+                let ctx = ctx.clone();
+                tokio::spawn(async move {
+                    app.create_peer_connection(true).await;
                     ctx.request_repaint();
                 });
             }
