@@ -78,6 +78,7 @@ impl WebRTCApp {
             }
         }
     }
+
     async fn create_answer(&self) -> RTCSessionDescription {
         let pc = self.peer_connection.lock().await.clone();
         if let Some(pc) = pc {
@@ -85,11 +86,11 @@ impl WebRTCApp {
             match pc.create_answer(None).await {
                 Ok(answer) => {
                     pc.set_local_description(answer.clone()).await.unwrap();
+                    self.gather_ice_candidates().await;
+
                     if let Some(local_desc) = pc.local_description().await {
                         info!("Answer created with SDP: {:?}", local_desc);
                         let local_sdp_clone = local_desc.sdp.clone();
-                        // local_sdp_clone
-                        //     .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
                         let mut local_sdp = self.local_sdp.lock().unwrap();
                         local_sdp.clone_from(&local_sdp_clone);
                         return local_desc.clone();
@@ -116,7 +117,6 @@ impl WebRTCApp {
             info!("Creating offer...");
             let ice_candidates = Arc::clone(&self.ice_candidates);
             pc.on_ice_candidate(Box::new(move |candidate| {
-                dbg!(&candidate);
                 let ice_candidates = Arc::clone(&ice_candidates);
                 Box::pin(async move {
                     if let Some(candidate) = candidate {
@@ -134,8 +134,6 @@ impl WebRTCApp {
                     if let Some(local_desc) = pc.local_description().await {
                         info!("Offer created with SDP: {:?}", &local_desc);
                         let local_sdp_clone = local_desc.sdp.clone();
-                        // local_sdp_clone
-                        //     .push_str("a=ice-ufrag:abcd\na=ice-pwd:efgh567890ijklmnopqrstu\n");
                         let mut local_sdp = self.local_sdp.lock().unwrap();
                         *local_sdp = local_sdp_clone
                     }
@@ -148,7 +146,6 @@ impl WebRTCApp {
             info!("Peer connection is not initialized");
         }
     }
-
     async fn handle_offer(&self) {
         let pc = self.peer_connection.lock().await.clone();
         if let Some(pc) = pc {
@@ -186,7 +183,6 @@ impl WebRTCApp {
                     // Add stored ICE candidates
                     let ice_candidates = self.ice_candidates.lock().await.clone();
                     for candidate in ice_candidates {
-                        dbg!(&candidate);
                         pc.add_ice_candidate(candidate).await.unwrap();
                     }
                 }
